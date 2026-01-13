@@ -9,8 +9,10 @@ public interface Connections<T> {
     void send(String channel, T msg);
 
     void disconnect(int connectionId);
-    
+
     void subscribe(String channel, int connectionId, int subscriptionId);
 
     void unsubscribe(String subscriptionId, int connectionId);
+
+    void addConnection(int connectionId, ConnectionHandler<T> handler);
 }

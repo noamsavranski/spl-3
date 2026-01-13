@@ -100,9 +100,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         
         loggedInUser = login;
         activeUsers.put(login, true);
-        String response = "CONNECTED\n" +
-                          "version:1.2\n" +
-                          "\n";
+        String response = "CONNECTED\n" + "version:1.2\n" + "\n";
         connections.send(connectionId, response); 
     }
     private void sendError(String message, String description) {
@@ -123,7 +121,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     private void checkForReceipt(Map<String, String> headers) {
         if (headers.containsKey("receipt")) {
             String receiptId = headers.get("receipt");
-            String response = "RECEIPT\n" + "receipt-id:" + receiptId + "\n" + "\n" +"\u0000";
+            String response = "RECEIPT\n" + "receipt-id:" + receiptId + "\n" + "\n";
             connections.send(connectionId, response);
         }
     }

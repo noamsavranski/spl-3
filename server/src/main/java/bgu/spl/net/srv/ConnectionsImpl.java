@@ -32,7 +32,7 @@ public class ConnectionsImpl<T> implements Connections<T> {
             }
             int msgId = messageIdCounter.incrementAndGet();
             String frame = "MESSAGE\n" + "subscription:" + subscriptionId + "\n" + "message-id:" + msgId + "\n" +
-            "destination:" + channel + "\n" + "\n" + msg + "\n" + "\u0000";
+            "destination:" + channel + "\n" + "\n" + msg + "\n";
             send(connectionId, (T) frame);
         }
     }
