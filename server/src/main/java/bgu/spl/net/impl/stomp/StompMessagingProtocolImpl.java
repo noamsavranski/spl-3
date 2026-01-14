@@ -148,7 +148,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             sendError("Error", "User is not subscribed to topic " + topic);
             return;
         }
-        connections.send(topic, body); 
+        String messageFrame = "MESSAGE\n" +
+                          "destination:" + topic + "\n" +
+                          "message-id:" + java.util.UUID.randomUUID() + "\n" + "user:" + loggedInUser + "\n" + "\n" + body; 
+        connections.send(topic, messageFrame); 
         checkForReceipt(headers);
     }
 
@@ -158,7 +161,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         if (loggedInUser != null) {
             activeUsers.remove(loggedInUser); 
         }
-        connections.disconnect(connectionId);
     }
 }
 
