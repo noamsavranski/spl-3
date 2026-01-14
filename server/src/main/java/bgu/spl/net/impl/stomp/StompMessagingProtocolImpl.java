@@ -15,6 +15,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     private static final java.util.concurrent.ConcurrentHashMap<String, String> users = new java.util.concurrent.ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Boolean> activeUsers = new ConcurrentHashMap<>();
 
+
     @Override
     public void start(int connectionId, Connections<String> connections) {
         this.connectionId = connectionId;
@@ -87,21 +88,23 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
 
-        if (users.containsKey(login)) {
-            String storedPass = users.get(login);
-            if (!storedPass.equals(passcode)) {
+        String sqlCheckUser = "SELECT password FROM Users WHERE username='" + login + "'";
+        String dbResponse = sendToDB(sqlCheckUser);
+        if (dbResponse == null || dbResponse.trim().isEmpty() || dbResponse.equals("None")) {
+            String sqlRegister = "INSERT INTO Users (username, password) VALUES ('" + login + "', '" + passcode + "')";
+            sendToDB(sqlRegister);
+        } 
+        else {
+            if (!dbResponse.trim().equals(passcode)) {
                 sendError("Login failed", "Wrong password");
                 return;
             }
         }
-        else {
-            users.put(login, passcode);
-        }
-        
-        loggedInUser = login;
+        String sqlLogLogin = "INSERT INTO Logins (username, login_time) VALUES ('" + login + "', datetime('now'))";
+        sendToDB(sqlLogLogin);
+        this.loggedInUser = login;
         activeUsers.put(login, true);
-        String response = "CONNECTED\n" + "version:1.2\n" + "\n";
-        connections.send(connectionId, response); 
+        connections.send(connectionId, "CONNECTED\n" + "version:1.2\n" + "\n"); 
     }
     private void sendError(String message, String description) {
         String errorFrame = "ERROR\n" + "message:" + message + "\n" +"\n" +"The details:\n" + description + "\n";      
@@ -148,19 +151,59 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             sendError("Error", "User is not subscribed to topic " + topic);
             return;
         }
+        String sqlFileLog = "INSERT INTO Files (username, filename, upload_time) " +
+                        "VALUES ('" + loggedInUser + "', '" + topic + "', datetime('now'))";
+        sendToDB(sqlFileLog);
         String messageFrame = "MESSAGE\n" +
                           "destination:" + topic + "\n" +
-                          "message-id:" + java.util.UUID.randomUUID() + "\n" + "user:" + loggedInUser + "\n" + "\n" + body; 
+                          "message-id:" + java.util.UUID.randomUUID() + "\n" + 
+                          "user:" + loggedInUser + "\n" + "\n" + body; 
         connections.send(topic, messageFrame); 
         checkForReceipt(headers);
     }
 
     private void handleDisconnect(Map<String, String> headers) {
         checkForReceipt(headers);
-        shouldTerminate = true;
         if (loggedInUser != null) {
-            activeUsers.remove(loggedInUser); 
+        String sqlLogout = "UPDATE Logins SET logout_time = datetime('now') " +
+                           "WHERE username = '" + loggedInUser + "' AND logout_time IS NULL";
+        sendToDB(sqlLogout);
+        shouldTerminate = true;
+        activeUsers.remove(loggedInUser); 
+        this.loggedInUser = null;
         }
+    }
+
+    private String sendToDB(String sqlCommand) {
+        String pythonServerHost = "127.0.0.1";
+        int pythonServerPort = 7778; 
+
+        try (java.net.Socket socket = new java.net.Socket(pythonServerHost, pythonServerPort);
+            java.io.PrintWriter out = new java.io.PrintWriter(socket.getOutputStream(), true);
+            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream()))) {
+
+            
+            out.println(sqlCommand);
+
+            
+            String response = in.readLine();
+            return response;
+
+        } catch (java.io.IOException e) {
+            System.out.println("Error communicating with DB server: " + e.getMessage());
+            return "Error";
+        }
+    }
+
+    public void printServerStats() {
+        System.out.println("--- Server Data Report (From DB) ---");
+        System.out.println("\n[Registered Users]:");
+        System.out.println(sendToDB("SELECT username FROM Users"));
+        System.out.println("\n[Login History]:");
+        System.out.println(sendToDB("SELECT username, login_time, logout_time FROM Logins"));
+        System.out.println("\n[Uploaded Files/Reports]:");
+        System.out.println(sendToDB("SELECT username, filename, upload_time FROM Files"));
+        System.out.println("------------------------------------");
     }
 }
 

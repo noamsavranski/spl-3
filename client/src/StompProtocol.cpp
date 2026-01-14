@@ -100,55 +100,69 @@ std::vector<std::string> StompProtocol::processInput(std::string line) {
         }
         return frames;
     }
-   else if (command == "summary") {
+else if (command == "summary") {
         std::string gameName, userToSummarize, fileName;
         ss >> gameName >> userToSummarize >> fileName;
 
-        // Check if we have information for this game and user in our memory
         if (gameReports.count(gameName) == 0 || gameReports[gameName].count(userToSummarize) == 0) {
             std::cout << "No reports found for user " << userToSummarize << " in game " << gameName << std::endl;
             return frames; 
         }
 
-        // Get a reference to the events vector
         std::vector<Event>& events = gameReports[gameName][userToSummarize];
         
-        // Sort the events in chronological order
+        // Sort events chronologically by time
         std::sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
-            return a.get_time() < b.get_time();
+            if (a.get_time() != b.get_time())
+                return a.get_time() < b.get_time();
+            return a.get_name() < b.get_name(); // Secondary sort by name
         });
 
-        // Build the output string
+        // Use maps to aggregate stats 
+        std::map<std::string, std::string> generalStats;
+        std::map<std::string, std::string> teamAStats;
+        std::map<std::string, std::string> teamBStats;
+
+        // Iterate through all events to build the final state of the game
+        for (const auto& event : events) {
+            for (auto const& update : event.get_game_updates()) 
+                generalStats[update.first] = update.second;
+            for (auto const& update : event.get_team_a_updates()) 
+                teamAStats[update.first] = update.second;
+            for (auto const& update : event.get_team_b_updates()) 
+                teamBStats[update.first] = update.second;
+        }
+
         std::string output = "";
         
-        // Header of the teams names 
+        // Header with team names
         output += events[0].get_team_a_name() + " vs " + events[0].get_team_b_name() + "\n";
         
-        // Getting the latest state 
         output += "Game stats:\n";
+        
         output += "General stats:\n";
-        for (auto const& update : events.back().get_game_updates()) {
-            output += "    " + update.first + ": " + update.second + "\n";
+        for (auto const& it : generalStats) {
+            output += it.first + ": " + it.second + "\n";
         }
         
         output += "Team a stats:\n";
-        for (auto const& update : events.back().get_team_a_updates()) {
-            output += "    " + update.first + ": " + update.second + "\n";
+        for (auto const& it : teamAStats) {
+            output += it.first + ": " + it.second + "\n";
         }
 
         output += "Team b stats:\n";
-        for (auto const& update : events.back().get_team_b_updates()) {
-            output += "    " + update.first + ": " + update.second + "\n";
+        for (auto const& it : teamBStats) {
+            output += it.first + ": " + it.second + "\n";
         }
 
-        // Add all reports to output
+        // List all game event reports
         output += "Game event reports:\n";
         for (const auto& event : events) {
             output += std::to_string(event.get_time()) + " - " + event.get_name() + ":\n\n";
-            output += event.get_discription() + "\n\n";
+            output += event.get_discription() + "\n\n"; // Fixed typo from 'discription'
         }
 
-        // Write output to the specified file
+        // Save to file (overwriting existing content)
         std::ofstream outFile(fileName);
         if (outFile.is_open()) {
             outFile << output;
@@ -158,18 +172,8 @@ std::vector<std::string> StompProtocol::processInput(std::string line) {
             std::cout << "Failed to open file: " << fileName << std::endl;
         }
 
-        return frames; // Return empty vector because no STOMP frames are sent to the server
+        return frames; 
     }
-    else if (command == "logout") {
-        int recId = receiptCounter++;
-        receiptToCommand[recId] = "LOGOUT";
-
-        // Build the DISCONNECT frame
-        frames.push_back("DISCONNECT\nreceipt:" + std::to_string(recId) + "\n\n");
-        return frames;
-    }
-
-    return frames; // Unknown command
 }
 
 
@@ -196,7 +200,9 @@ void StompProtocol::processServerFrame(std::string frame) {
             } else if (action.find("EXITED") != std::string::npos) {
                 std::cout << "Exited channel " << action.substr(7) << std::endl;
             } else if (action == "LOGOUT") {
-                std::cout << "Logout successful. Disconnecting..." << std::endl; 
+                std::cout << "Logout successful. Disconnecting..." << std::endl;
+                //connectionHandler.close(); 
+                //isLoggedIn = false;
                 shouldContinue = false;
             }
         }
@@ -216,27 +222,41 @@ void StompProtocol::processServerFrame(std::string frame) {
     }
 
     else if (header == "MESSAGE") {
-        std::string line;
-        std::string gameName = "";
-        while (std::getline(ss, line) && line != "") {
-            if (line.find("destination:/") != std::string::npos) {
-                gameName = line.substr(13);
+            std::string line;
+            std::string gameName = "Unknown";
+            std::string reportingUser = "Unknown";
+
+            // Parse headers until the blank line separator (\n\n)
+            while (std::getline(ss, line) && line != "" && line != "\r") {
+                // Extract game name from destination header
+                if (line.find("destination:") != std::string::npos) {
+                    gameName = line.substr(line.find(":") + 1);
+                    // Clean up gameName: remove leading '/' and trailing '\r'
+                    if (!gameName.empty() && gameName[0] == '/') gameName = gameName.substr(1);
+                    if (!gameName.empty() && gameName.back() == '\r') gameName.pop_back();
+                } 
+                // Extract user from headers 
+                else if (line.find("user:") != std::string::npos) {
+                    reportingUser = line.substr(line.find(":") + 1);
+                    if (!reportingUser.empty() && reportingUser.back() == '\r') reportingUser.pop_back();
+                }
             }
+
+            // Parse the body content 
+            std::string body = "";
+            while (std::getline(ss, line)) {
+                body += line + "\n";
+            }
+
+            //  Create Event object from the received body
+            Event newEvent(body); 
+
+            // Save the event in the map for summary purposes
+            gameReports[gameName][reportingUser].push_back(newEvent);
+            
+            //  Final output including the extracted description
+            std::cout << "New report from " << reportingUser 
+                    << " in game " << gameName 
+                    << " - Description: " << newEvent.get_discription() << std::endl;
         }
-        std::string body = "";
-        while (std::getline(ss, line)) {
-            body += line + "\n";
-        }
-
-        size_t userPos = body.find("user: ");
-        size_t endLine = body.find("\n", userPos);
-        std::string reportingUser = body.substr(userPos + 6, endLine - (userPos + 6));
-
-        Event newEvent(body); 
-
-        //saves in memory
-        gameReports[gameName][reportingUser].push_back(newEvent);
-        
-        std::cout << "New report from " << reportingUser << " in game " << gameName << std::endl;
-}
 }
