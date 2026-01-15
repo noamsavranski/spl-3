@@ -29,7 +29,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     @Override
     public void process(String message) {
         String actualMessage = message.replace("\u0000", "");
-        String[] lines = message.split("\n");
+        String[] lines = actualMessage.split("\n");
         if (lines.length == 0) {
             return;
         }
@@ -72,6 +72,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         }
     }
     private void handleConnect(java.util.Map<String, String> headers) {
+        System.out.println("DEBUG: handleConnect started for user: " + headers.get("login"));
         if (!headers.containsKey("accept-version") || !headers.containsKey("host") || !headers.containsKey("login") || !headers.containsKey("passcode")) {
             sendError("Malfromed Frame", "Missing mandatory headers for CONNECT");
             return;
@@ -88,10 +89,12 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
 
-        String sqlCheckUser = "SELECT password FROM Users WHERE username='" + login + "'";
+        String sqlCheckUser = "SELECT password FROM users WHERE username='" + login + "'";
+        System.out.println("DEBUG: Sending query to DB: " + sqlCheckUser);
         String dbResponse = sendToDB(sqlCheckUser);
+        System.out.println("DEBUG: DB Response was: " + dbResponse);
         if (dbResponse == null || dbResponse.trim().isEmpty() || dbResponse.equals("None")) {
-            String sqlRegister = "INSERT INTO Users (username, password) VALUES ('" + login + "', '" + passcode + "')";
+            String sqlRegister = "INSERT INTO users (username, password) VALUES ('" + login + "', '" + passcode + "')";
             sendToDB(sqlRegister);
         } 
         else {
@@ -100,17 +103,22 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 return;
             }
         }
-        String sqlLogLogin = "INSERT INTO Logins (username, login_time) VALUES ('" + login + "', datetime('now'))";
+        String sqlLogLogin = "INSERT INTO logins (username, login_time) VALUES ('" + login + "', datetime('now'))";
         sendToDB(sqlLogLogin);
         this.loggedInUser = login;
         activeUsers.put(login, true);
         connections.send(connectionId, "CONNECTED\n" + "version:1.2\n" + "\n"); 
     }
     private void sendError(String message, String description) {
+         System.out.println("[SERVER][ERROR] " + message + " | " + description + " | connId=" + connectionId + " user=" + loggedInUser);
         String errorFrame = "ERROR\n" + "message:" + message + "\n" +"\n" +"The details:\n" + description + "\n";      
         connections.send(connectionId, errorFrame);
+        if (loggedInUser != null) {
+            activeUsers.remove(loggedInUser);
+            loggedInUser = null;
+        }
         shouldTerminate = true; 
-        connections.disconnect(connectionId);
+            
     }
     private void handleSubscribe(java.util.Map<String, String> headers) {
         if (!validateHeaders(headers, "destination", "id")) return;
@@ -141,6 +149,8 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     private void handleUnsubscribe(Map<String, String> headers) {
         if (!validateHeaders(headers, "id")) return; 
         String subId = headers.get("id");
+        ((ConnectionsImpl<String>) connections).unsubscribe(subId, connectionId);
+
         checkForReceipt(headers);
     }
 
@@ -151,6 +161,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             sendError("Error", "User is not subscribed to topic " + topic);
             return;
         }
+        System.out.println("DEBUG: Reporting to DB for topic: " + topic);
         String sqlFileLog = "INSERT INTO Files (username, filename, upload_time) " +
                         "VALUES ('" + loggedInUser + "', '" + topic + "', datetime('now'))";
         sendToDB(sqlFileLog);
@@ -165,44 +176,57 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     private void handleDisconnect(Map<String, String> headers) {
         checkForReceipt(headers);
         if (loggedInUser != null) {
-        String sqlLogout = "UPDATE Logins SET logout_time = datetime('now') " +
-                           "WHERE username = '" + loggedInUser + "' AND logout_time IS NULL";
-        sendToDB(sqlLogout);
-        shouldTerminate = true;
-        activeUsers.remove(loggedInUser); 
-        this.loggedInUser = null;
+            String sqlLogout = "UPDATE logins SET logout_time = datetime('now') " +
+                            "WHERE username = '" + loggedInUser + "' AND logout_time IS NULL";
+            sendToDB(sqlLogout);
+            activeUsers.remove(loggedInUser);
+            this.loggedInUser = null;
         }
+        shouldTerminate = true;
+        
     }
 
     private String sendToDB(String sqlCommand) {
-        String pythonServerHost = "127.0.0.1";
-        int pythonServerPort = 7778; 
+        int pythonServerPort = 7778;
 
-        try (java.net.Socket socket = new java.net.Socket(pythonServerHost, pythonServerPort);
-            java.io.PrintWriter out = new java.io.PrintWriter(socket.getOutputStream(), true);
-            java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream()))) {
+        try (java.net.Socket socket = new java.net.Socket("127.0.0.1", pythonServerPort)) {
+            socket.setSoTimeout(2000);
+            java.io.OutputStream out = socket.getOutputStream();
+            byte[] bytes = (sqlCommand + "\u0000").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            out.write(bytes);
+            out.flush();
+            socket.shutdownOutput();
 
-            
-            out.println(sqlCommand);
+            java.io.InputStream in = socket.getInputStream();
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            int b;
+            while ((b = in.read()) != -1) {
+                if (b == '\n') break; 
+                buf.write(b);
+            }
 
-            
-            String response = in.readLine();
-            return response;
+            return buf.toString("UTF-8").trim();
 
-        } catch (java.io.IOException e) {
-            System.out.println("Error communicating with DB server: " + e.getMessage());
-            return "Error";
+        } 
+        catch (java.net.SocketTimeoutException e) {
+            System.out.println("DB ERROR: timeout waiting for Python response");
+            return "";
+        } 
+        catch (Exception e) {
+            System.out.println("DB ERROR: " + e.getMessage());
+            return "";
         }
     }
 
+
     public void printServerStats() {
         System.out.println("--- Server Data Report (From DB) ---");
-        System.out.println("\n[Registered Users]:");
-        System.out.println(sendToDB("SELECT username FROM Users"));
+        System.out.println("\n[Registered users]:");
+        System.out.println(sendToDB("SELECT username FROM users"));
         System.out.println("\n[Login History]:");
-        System.out.println(sendToDB("SELECT username, login_time, logout_time FROM Logins"));
+        System.out.println(sendToDB("SELECT username, login_time, logout_time FROM logins"));
         System.out.println("\n[Uploaded Files/Reports]:");
-        System.out.println(sendToDB("SELECT username, filename, upload_time FROM Files"));
+        System.out.println(sendToDB("SELECT username, filename, upload_time FROM files"));
         System.out.println("------------------------------------");
     }
 }

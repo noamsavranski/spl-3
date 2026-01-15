@@ -100,80 +100,90 @@ std::vector<std::string> StompProtocol::processInput(std::string line) {
         }
         return frames;
     }
-else if (command == "summary") {
-        std::string gameName, userToSummarize, fileName;
-        ss >> gameName >> userToSummarize >> fileName;
+    else if (command == "summary") {
+            std::string gameName, userToSummarize, fileName;
+            ss >> gameName >> userToSummarize >> fileName;
 
-        if (gameReports.count(gameName) == 0 || gameReports[gameName].count(userToSummarize) == 0) {
-            std::cout << "No reports found for user " << userToSummarize << " in game " << gameName << std::endl;
+            if (gameReports.count(gameName) == 0 || gameReports[gameName].count(userToSummarize) == 0) {
+                std::cout << "No reports found for user " << userToSummarize << " in game " << gameName << std::endl;
+                return frames; 
+            }
+
+            std::vector<Event>& events = gameReports[gameName][userToSummarize];
+            
+            // Sort events chronologically by time
+            std::sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
+                if (a.get_time() != b.get_time())
+                    return a.get_time() < b.get_time();
+                return a.get_name() < b.get_name(); // Secondary sort by name
+            });
+
+            // Use maps to aggregate stats 
+            std::map<std::string, std::string> generalStats;
+            std::map<std::string, std::string> teamAStats;
+            std::map<std::string, std::string> teamBStats;
+
+            // Iterate through all events to build the final state of the game
+            for (const auto& event : events) {
+                for (auto const& update : event.get_game_updates()) 
+                    generalStats[update.first] = update.second;
+                for (auto const& update : event.get_team_a_updates()) 
+                    teamAStats[update.first] = update.second;
+                for (auto const& update : event.get_team_b_updates()) 
+                    teamBStats[update.first] = update.second;
+            }
+
+            std::string output = "";
+            
+            // Header with team names
+            output += events[0].get_team_a_name() + " vs " + events[0].get_team_b_name() + "\n";
+            
+            output += "Game stats:\n";
+            
+            output += "General stats:\n";
+            for (auto const& it : generalStats) {
+                output += it.first + ": " + it.second + "\n";
+            }
+            
+            output += "Team a stats:\n";
+            for (auto const& it : teamAStats) {
+                output += it.first + ": " + it.second + "\n";
+            }
+
+            output += "Team b stats:\n";
+            for (auto const& it : teamBStats) {
+                output += it.first + ": " + it.second + "\n";
+            }
+
+            // List all game event reports
+            output += "Game event reports:\n";
+            for (const auto& event : events) {
+                output += std::to_string(event.get_time()) + " - " + event.get_name() + ":\n\n";
+                output += event.get_discription() + "\n\n"; // Fixed typo from 'discription'
+            }
+
+            // Save to file (overwriting existing content)
+            std::ofstream outFile(fileName);
+            if (outFile.is_open()) {
+                outFile << output;
+                outFile.close();
+                std::cout << "Summary saved to " << fileName << std::endl;
+            } else {
+                std::cout << "Failed to open file: " << fileName << std::endl;
+            }
+
             return frames; 
         }
+        else if (command == "logout") {
+            int recId = receiptCounter++;
+            receiptToCommand[recId] = "LOGOUT";
 
-        std::vector<Event>& events = gameReports[gameName][userToSummarize];
-        
-        // Sort events chronologically by time
-        std::sort(events.begin(), events.end(), [](const Event& a, const Event& b) {
-            if (a.get_time() != b.get_time())
-                return a.get_time() < b.get_time();
-            return a.get_name() < b.get_name(); // Secondary sort by name
-        });
-
-        // Use maps to aggregate stats 
-        std::map<std::string, std::string> generalStats;
-        std::map<std::string, std::string> teamAStats;
-        std::map<std::string, std::string> teamBStats;
-
-        // Iterate through all events to build the final state of the game
-        for (const auto& event : events) {
-            for (auto const& update : event.get_game_updates()) 
-                generalStats[update.first] = update.second;
-            for (auto const& update : event.get_team_a_updates()) 
-                teamAStats[update.first] = update.second;
-            for (auto const& update : event.get_team_b_updates()) 
-                teamBStats[update.first] = update.second;
+            // יצירת פריים הדיסקונקט
+            std::string frame = "DISCONNECT\nreceipt:" + std::to_string(recId) + "\n\n";
+            frames.push_back(frame + '\0'); // מוסיפים \0 לסיום פריים
+            return frames;
         }
-
-        std::string output = "";
-        
-        // Header with team names
-        output += events[0].get_team_a_name() + " vs " + events[0].get_team_b_name() + "\n";
-        
-        output += "Game stats:\n";
-        
-        output += "General stats:\n";
-        for (auto const& it : generalStats) {
-            output += it.first + ": " + it.second + "\n";
-        }
-        
-        output += "Team a stats:\n";
-        for (auto const& it : teamAStats) {
-            output += it.first + ": " + it.second + "\n";
-        }
-
-        output += "Team b stats:\n";
-        for (auto const& it : teamBStats) {
-            output += it.first + ": " + it.second + "\n";
-        }
-
-        // List all game event reports
-        output += "Game event reports:\n";
-        for (const auto& event : events) {
-            output += std::to_string(event.get_time()) + " - " + event.get_name() + ":\n\n";
-            output += event.get_discription() + "\n\n"; // Fixed typo from 'discription'
-        }
-
-        // Save to file (overwriting existing content)
-        std::ofstream outFile(fileName);
-        if (outFile.is_open()) {
-            outFile << output;
-            outFile.close();
-            std::cout << "Summary saved to " << fileName << std::endl;
-        } else {
-            std::cout << "Failed to open file: " << fileName << std::endl;
-        }
-
-        return frames; 
-    }
+        return std::vector<std::string>();
 }
 
 
