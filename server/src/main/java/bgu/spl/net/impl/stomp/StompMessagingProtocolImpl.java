@@ -62,7 +62,9 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 handleUnsubscribe(headers);
                 break;
             case "SEND":
-                 handleSend(headers, body);
+                int bodyStartIndex = actualMessage.indexOf("\n\n");
+                String bodyOnly = (bodyStartIndex != -1) ? actualMessage.substring(bodyStartIndex + 2) : "";
+                handleSend(headers, bodyOnly); 
                 break;
             case "DISCONNECT":
                 handleDisconnect(headers);
@@ -183,7 +185,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             this.loggedInUser = null;
         }
         shouldTerminate = true;
-        
     }
 
     private String sendToDB(String sqlCommand) {

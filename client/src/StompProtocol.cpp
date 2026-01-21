@@ -69,16 +69,14 @@ std::vector<std::string> StompProtocol::processInput(std::string line) {
     else if (command == "report") {
         std::string filePath;
         ss >> filePath;
-
-        // Reads the file
         names_and_events parsedData = parseEventsFile(filePath);
         
         for (const auto& event : parsedData.events) {
-            // Builds a frame for each
-            std::string frame = "SEND\ndestination:/" + parsedData.team_a_name + "_" + parsedData.team_b_name + "\n\n";
+            std::string frame = "SEND\n";
+            frame += "destination:/" + parsedData.team_a_name + "_" + parsedData.team_b_name + "\n\n"; 
             frame += "user: " + userName + "\n";
-            frame += "team a: " + event.get_team_a_name() + "\n";
-            frame += "team b: " + event.get_team_b_name() + "\n";
+            frame += "team a: " + parsedData.team_a_name + "\n";
+            frame += "team b: " + parsedData.team_b_name + "\n";
             frame += "event name: " + event.get_name() + "\n";
             frame += "time: " + std::to_string(event.get_time()) + "\n";
             
@@ -86,20 +84,24 @@ std::vector<std::string> StompProtocol::processInput(std::string line) {
             for (auto const& update : event.get_game_updates()) {
                 frame += "    " + update.first + ": " + update.second + "\n";
             }
+
             frame += "team a updates:\n";
             for (auto const& update : event.get_team_a_updates()) {
                 frame += "    " + update.first + ": " + update.second + "\n";
-               }
+            }
+
             frame += "team b updates:\n";
             for (auto const& update : event.get_team_b_updates()) {
                 frame += "    " + update.first + ": " + update.second + "\n";
             }
+
             frame += "description:\n" + event.get_discription() + "\n";
             
             frames.push_back(frame);
         }
         return frames;
     }
+    
     else if (command == "summary") {
             std::string gameName, userToSummarize, fileName;
             ss >> gameName >> userToSummarize >> fileName;
@@ -232,41 +234,67 @@ void StompProtocol::processServerFrame(std::string frame) {
     }
 
     else if (header == "MESSAGE") {
-            std::string line;
-            std::string gameName = "Unknown";
-            std::string reportingUser = "Unknown";
-
-            // Parse headers until the blank line separator (\n\n)
-            while (std::getline(ss, line) && line != "" && line != "\r") {
-                // Extract game name from destination header
-                if (line.find("destination:") != std::string::npos) {
-                    gameName = line.substr(line.find(":") + 1);
-                    // Clean up gameName: remove leading '/' and trailing '\r'
-                    if (!gameName.empty() && gameName[0] == '/') gameName = gameName.substr(1);
-                    if (!gameName.empty() && gameName.back() == '\r') gameName.pop_back();
-                } 
-                // Extract user from headers 
-                else if (line.find("user:") != std::string::npos) {
-                    reportingUser = line.substr(line.find(":") + 1);
-                    if (!reportingUser.empty() && reportingUser.back() == '\r') reportingUser.pop_back();
-                }
+        std::map<std::string, std::string> headers; 
+        std::string line;
+        std::string body = "";
+        while (std::getline(ss, line) && line != "" && line != "\r") {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t colonPos = line.find(':');
+            if (colonPos != std::string::npos) {
+                std::string key = line.substr(0, colonPos);
+                std::string value = line.substr(colonPos + 1);
+                key.erase(0, key.find_first_not_of(" \t\r\n"));
+                key.erase(key.find_last_not_of(" \t\r\n") + 1);
+                value.erase(0, value.find_first_not_of(" \t\r\n"));
+                value.erase(value.find_last_not_of(" \t\r\n") + 1);
+                
+                headers[key] = value;
             }
-
-            // Parse the body content 
-            std::string body = "";
-            while (std::getline(ss, line)) {
-                body += line + "\n";
-            }
-
-            //  Create Event object from the received body
-            Event newEvent(body); 
-
-            // Save the event in the map for summary purposes
-            gameReports[gameName][reportingUser].push_back(newEvent);
-            
-            //  Final output including the extracted description
-            std::cout << "New report from " << reportingUser 
-                    << " in game " << gameName 
-                    << " - Description: " << newEvent.get_discription() << std::endl;
         }
+        while (std::getline(ss, line)) {
+            body += line + "\n";
+        }
+        std::string reportingUser = headers.count("user") ? headers["user"] : "Unknown";
+        if (reportingUser == "Unknown") {
+            size_t userPos = body.find("user:");
+            if (userPos != std::string::npos) {
+                size_t start = userPos + 5;
+                size_t end = body.find("\n", start);
+                reportingUser = body.substr(start, end - start);
+                reportingUser.erase(0, reportingUser.find_first_not_of(" \t\r\n"));
+                reportingUser.erase(reportingUser.find_last_not_of(" \t\r\n") + 1);
+            }
+        }
+
+        std::string gameName = headers.count("destination") ? headers["destination"] : "Unknown";
+        if (!gameName.empty() && gameName[0] == '/') gameName = gameName.substr(1);
+
+        Event newEvent(body); 
+        gameReports[gameName][reportingUser].push_back(newEvent);
+
+        std::cout << "-----------------------------------" << std::endl;
+        std::cout << "user: " << reportingUser << std::endl;
+        std::cout << "team a: " << newEvent.get_team_a_name() << std::endl;
+        std::cout << "team b: " << newEvent.get_team_b_name() << std::endl;
+        std::cout << "event name: " << newEvent.get_name() << std::endl;
+        std::cout << "time: " << newEvent.get_time() << std::endl;
+        
+        std::cout << "general game updates:" << std::endl;
+        for (auto const& update : newEvent.get_game_updates()) {
+            std::cout << "    " << update.first << ": " << update.second << std::endl;
+        }
+        
+        std::cout << "team a updates:" << std::endl;
+        for (auto const& update : newEvent.get_team_a_updates()) {
+            std::cout << "    " << update.first << ": " << update.second << std::endl;
+        }
+        
+        std::cout << "team b updates:" << std::endl;
+        for (auto const& update : newEvent.get_team_b_updates()) {
+            std::cout << "    " << update.first << ": " << update.second << std::endl;
+        }
+        
+        std::cout << "description:" << std::endl << newEvent.get_discription() << std::endl;
+        std::cout << "-----------------------------------" << std::endl;
+    }
 }

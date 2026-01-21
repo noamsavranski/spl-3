@@ -1,7 +1,6 @@
 package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
-import bgu.spl.net.api.MessagingProtocol;
 import bgu.spl.net.api.StompMessagingProtocol;
 
 import java.io.IOException;
@@ -54,7 +53,8 @@ public abstract class BaseServer<T> implements Server<T> {
 
                 execute(handler);
             }
-        } catch (IOException ex) {
+        } 
+        catch (IOException ex) {
         }
 
         System.out.println("server closed!!!");
